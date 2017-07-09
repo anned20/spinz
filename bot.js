@@ -2,28 +2,39 @@
     'use strict';
 
 	var SpinzBot = function() {
-		var _this = this;
-		var game = window.game;
-		var me = {};
-		var threshold = 100;
+		// Value initialization
+		var _this = this,
+			game = window.game,
+			threshold = 200;
+		this.me = {};
+		this.deaths = 0;
+		this.isRespawning = false;
+		this.maxRpm = 0;
 
-		this.mode = 'defensive'; // Aggresive to follow everyone, defensive to flee for everyone
-		this.disabled = false;
+		// Settings
+		this.enabled = true;
 
-		$('body').append('<div style="position: absolute; background-color: #FFFFFF; top: 10px; left: 10px; padding: 10px;" id="playerList"></div>');
-
+		/**
+		 * Function to spawn at start
+		 */
 		this.spawn = function() {
-			console.log('Spawning');
-			var playButton = $('.hud-intro-form button');
-			playButton.click();
+			$('.hud-intro-form button').click();
 		};
 
+		/**
+		 * Function to respawn after death
+		 */
 		this.respawn = function() {
-			console.log('Respawning');
-			var respawnButton = $('.hud-respawn-actions button');
-			respawnButton.click();
+			$('.hud-respawn-actions button').click();
 		};
 
+		/**
+		 * Send mouse movement
+		 *
+		 * @param mouseX x coordinate to send
+		 * @param mouseY y coordinate to send
+		 * @param type Type of event to send
+		 */
 		this.sendMovement = function(mouseX, mouseY, type) {
 			if (typeof type === 'undefined') {
 				type = 'mouseMoved';
@@ -31,8 +42,6 @@
 
 			var x = Math.min(Math.max(mouseX, 10), window.innerWidth - 10);
 			var y = Math.min(Math.max(mouseY, 10), window.innerHeight - 10);
-
-			// console.log(x, y, type);
 
 			if (type === 'mouseMoved') {
 				game.inputManager.emit('mouseUp', {
@@ -47,141 +56,104 @@
 			});
 		};
 
-		this.goDirection = function(direction) {
-			switch (direction) {
-				case 'left':
-					this.sendMovement(0, window.innerHeight / 2);
-					break;
-				
-				case 'right':
-					this.sendMovement(window.innerWidth, window.innerHeight / 2);
-					break;
-				
-				case 'up':
-					this.sendMovement(window.innerWidth / 2, 0);
-					break;
-				
-				case 'down':
-					this.sendMovement(window.innerWidth / 2, window.innerHeight);
-					break;
+		/**
+		 * Get all players around the bot sorted by RPM (high to low)
+		 */
+		this.getPlayersAround = function() {
+			return _.chain(game.renderer.entities.attachments[2].attachments)
+				.map(function(playerEntity) {
+					var toReturn = {
+						isSelf: game.options.nickname === playerEntity.targetTick.name,
+						playerName: playerEntity.targetTick.name,
+						position: {
+							x: playerEntity.node.worldTransform.tx,
+							y: playerEntity.node.worldTransform.ty,
+						},
+						rpm: Number(playerEntity.currentModel.rpmEntity.text._text.replace(',', '')),
+					};
 
-				case 'leftup':
-					this.sendMovement((window.innerWidth / 2) - 100, (window.innerHeight / 2) - 100);
-					break;
-				
-				case 'leftdown':
-					this.sendMovement((window.innerWidth / 2) - 100, (window.innerHeight / 2) + 100);
-					break;
-				
-				case 'rightup':
-					this.sendMovement((window.innerWidth / 2) + 100, (window.innerHeight / 2) - 100);
-					break;
-				
-				case 'rightdown':
-					this.sendMovement((window.innerWidth / 2) + 100, (window.innerHeight / 2) + 100);
-					break;
-				
-				default:
-					this.sendMovement(window.innerWidth / 2, window.innerHeight / 2);
-					break;
-			}
+					if (toReturn.isSelf) {
+						_this.me = toReturn;
+					}
+
+					return toReturn;
+				})
+				.filter(function(player) {
+					return player.rpm > 0 && !player.isSelf;
+				})
+				.sortBy(function (player) {
+					return player.rpm * -1;
+				})
+				.value();
 		};
 
-		this.getAmount = function(type) {
-			var types = {
-				'food': 1,
-				'players': 2,
-			}
-
-			return game.renderer.entities.attachments[types[type]].attachments.length;
+		/**
+		 * Get all food around the bot sorted by reward (high to low)
+		 */
+		this.getFoodAround = function() {
+			return _.chain(game.renderer.entities.attachments[1].attachments)
+				.map(function(foodEntity) {
+					return {
+						x: foodEntity.node.worldTransform.tx,
+						y: foodEntity.node.worldTransform.ty,
+						model: foodEntity.targetTick.model ? foodEntity.targetTick.model : 'NotDot',
+						reward: foodEntity.targetTick.reward,
+					};
+				})
+				.filter(function(food) {
+					return food.model === 'Dot';
+				})
+				.sortBy(function (food) {
+					return food.reward * -1;
+				})
+				.value();
 		}
 
-		this.getPlayersAround = function() {
-			return _.filter(_.map(game.renderer.entities.attachments[2].attachments, function(playerEntity, index) {
-				var toReturn = {
-					isSelf: game.options.nickname === playerEntity.targetTick.name,
-					playerName: playerEntity.targetTick.name,
-					position: {
-						x: playerEntity.currentModel.node.worldTransform.tx,
-						y: playerEntity.currentModel.node.worldTransform.ty,
-					},
-					rpm: Number(playerEntity.currentModel.rpmEntity.text._text.replace(',', '')),
-				};
-
-				if (toReturn.isSelf) {
-					me = toReturn;
-				}
-
-				return toReturn;
-			}), function(player) {
-				return player.rpm > 0 && !player.isSelf;
-			});
-		}
-
-		this.getMe = function() {
-			return _.where(this.getPlayersAround(), {isSelf: true})[0];
-		}
-
-		this.getRelativePlayerPos = function(player) {
-			var toReturn = {
-				x: player.position.x <= 0 ? 0 : player.position.x,
-				y: player.position.y <= 0 ? 0 : player.position.y,
-			};
-
-			console.log(toReturn);
-
-			return toReturn;
-		}
-
+		/**
+		 * Main loop
+		 */
 		this.run = function() {
 			$('#playerList').html('');
 
 			var players = _this.getPlayersAround();
+			var food = _this.getFoodAround();
 			var desired = {
-				x: 0,
-				y: 0,
 				type: 'mouseMoved',
 			}
 
-			_.each(players, function(player) {
-				var color = (player.rpm > me.rpm) ? '#FF0000' : '#00FF00';
+			if (players[0]) {
+				var player = players[0];
 
-				var playerPos = _this.getRelativePlayerPos(player);
-
-				if (player.rpm < (me.rpm * 0.8)) {
-					desired.x += playerPos.x;
-					desired.y += playerPos.y;
-					desired.type = 'mouseDown';
+				if (player.rpm > _this.me.rpm) {
+					desired.x = (player.position.x * -1) + window.innerWidth;
+					desired.y = (player.position.y * -1) + window.innerHeight;
 				} else {
-					desired.x += playerPos.x * -1;
-					desired.y += playerPos.y * -1;
-
-					if ((playerPos.x <= threshold && playerPos.x >= -threshold) || (playerPos.y <= threshold && playerPos.y >= -threshold)) {
-						// console.warn('CLOSE');
-						desired.type = 'mouseDown';
-					}
+					desired.x = player.position.x;
+					desired.y = player.position.y;
+					desired.type = 'mouseDown';
 				}
-
-
-				$('#playerList').append('<b style="color: ' + color + '">' + player.playerName + '</b> (' + player.rpm + ')<br>');
-
-				// if (_this.mode === 'aggresive') {
-				// 	desired.x += _this.getRelativePlayerPos(player).x;
-				// 	desired.y += _this.getRelativePlayerPos(player).y;
-				// } else if (_this.mode === 'defensive') {
-				// 	desired.x += _this.getRelativePlayerPos(player).x * -1;
-				// 	desired.y += _this.getRelativePlayerPos(player).y * -1;
-				// } else {
-				// 	console.log('The fuck?');
-				// }
-			});
-
-			_this.sendMovement(desired.x, desired.y, desired.type);
-
-			if (!_this.disabled) {
-				requestAnimationFrame(_this.run);
+			} else {
+				if (food[0]) {
+					desired.x = food[0].x;
+					desired.y = food[0].y;
+				}
 			}
-		}
+
+			if (_this.me.rpm > _this.maxRpm) {
+				_this.maxRpm = _this.me.rpm;
+			}
+
+
+			if (_this.me.rpm === 0) {
+				_this.respawn()
+			}
+
+			if (_this.enabled) {
+				_this.sendMovement(desired.x, desired.y, desired.type);
+			}
+
+			requestAnimationFrame(_this.run);
+		};
 
 		this.run();
 	};
