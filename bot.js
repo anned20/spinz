@@ -4,10 +4,11 @@
 	var SpinzBot = function() {
 		// Value initialization
 		var _this = this,
-			game = window.game,
-			threshold = 200;
+			game = window.game;
+
 		this.me = {};
 		this.maxRpm = 0;
+		this.maxKills = 0;
 		this.blocksize = 240;
 
 		// Settings
@@ -44,7 +45,7 @@
 			var x = Math.min(Math.max(mouseX, 1), window.innerWidth - 1);
 			var y = Math.min(Math.max(mouseY, 1), window.innerHeight - 1);
 
-			$('#cursor').css('left', x + 'px').css('top', y + 'px');
+			$('#cursor').css('left', x - 10 + 'px').css('top', y - 10 + 'px');
 
 			if (type === 'mouseMoved') {
 				game.inputManager.emit('mouseUp', {
@@ -72,7 +73,12 @@
 							x: playerEntity.node.worldTransform.tx,
 							y: playerEntity.node.worldTransform.ty,
 						},
+						absposition: {
+							x: playerEntity.node.position._x,
+							y: playerEntity.node.position._y,
+						},
 						rpm: Number(playerEntity.currentModel.rpmEntity.text._text.replace(',', '')),
+						kills: Number(playerEntity.targetTick.kills),
 					};
 
 					if (toReturn.isSelf) {
@@ -161,15 +167,61 @@
 			return foodBlocks;
 		}
 
-		this.playerIsClose = function(playerPos, mePos, offset) {
-			if ((playerPos.x >= (mePos.x - offset) || playerPos.x <= (mePos.x + offset)) && (playerPos.y >= (mePos.y - offset) || playerPos.y <= (mePos.y + offset))) {
-				return true;
-			}
+		/**
+		 * Get distance between 2 points
+		 */
+		this.computeDistance = function(point1, point2) {
+			var xdis = point1.x - point2.x;
+			var ydis = point1.y - point2.y;
 
-			return false;
+			var distance = Math.sqrt(xdis * xdis + ydis * ydis);
+
+			return distance;
+		};
+
+		/**
+		 * Get angle between 2 points
+		 */
+		this.computeAngle = function(point1, point2) {
+			return (Math.round(Math.atan2(-(point1.y - point2.y), -(point1.x - point2.x)) / Math.PI * 180 + 180));
+		}
+
+		/**
+		 * Return one of eight angles
+		 *
+		 * 0: left
+		 * 1: above left
+		 * 2: above
+		 * 3: above right
+		 * 4: right
+		 * 5: below right
+		 * 6: below
+		 * 7: below left
+		 */
+		this.getSimplifiedAngle = function(point1, point2) {
+			var angle = _this.computeAngle(point1, point2);
+
+			if (angle >= 0 && angle < 45) {
+				return 0;
+			} else if (angle >= 45 && angle < 90) {
+				return 1;
+			} else if (angle >= 90 && angle < 135) {
+				return 2;
+			} else if (angle >= 135 && angle < 180) {
+				return 3;
+			} else if (angle >= 180 && angle < 225) {
+				return 4;
+			} else if (angle >= 225 && angle < 270) {
+				return 5;
+			} else if (angle >= 270 && angle < 315) {
+				return 6;
+			} else if (angle >= 315 && angle < 360) {
+				return 7;
+			}
 		}
 
 		this.ticks = 0;
+
 		/**
 		 * Main loop
 		 */
@@ -187,27 +239,49 @@
 			if (players[0] && players[0].rpm > 20) {
 				var player = players[0];
 
-				if (player.rpm < (_this.me.rpm * 0.8)) {
+				var distance = _this.computeDistance(player.position, _this.me.position);
+
+				if (player.rpm < (_this.me.rpm * 0.8) && distance <= 700) {
 					desired.x = player.position.x;
 					desired.y = player.position.y;
-				} else if (player.rpm > _this.me.rpm) {
+				} else if (player.rpm > _this.me.rpm && distance <= 700) {
 					desired.x = (player.position.x * -1) + window.innerWidth;
 					desired.y = (player.position.y * -1) + window.innerHeight;
-				} else {
-					if (_this.food[0] && _this.food[0][0]) {
-						desired.x = ((_this.food[0][0].x * _this.blocksize));
-						desired.y = ((_this.food[0][0].y * _this.blocksize));
-					}
+				}
+
+				if (_this.computeDistance(player.position, _this.me.position) <= 600) {
+					desired.type = 'mouseDown';
+				}
+				
+				if (_this.me.absposition.x < 100) {
+					desired.x += 100;
+					console.log('border');
+				}
+				if (_this.me.absposition.x > (game.world.width - 100)) {
+					desired.x -= 100;
+					console.log('border');
+				}
+				if (_this.me.absposition.y < 100) {
+					desired.y += 100;
+					console.log('border');
+				}
+				if (_this.me.absposition.y > (game.world.height - 100)) {
+					desired.y -= 100;
+					console.log('border');
 				}
 			} else {
 				if (_this.food[0] && _this.food[0][0]) {
-					desired.x = ((_this.food[0][0].x * _this.blocksize));
-					desired.y = ((_this.food[0][0].y * _this.blocksize));
+					desired.x = ((_this.food[0][0].x * _this.blocksize) + (_this.blocksize / 2));
+					desired.y = ((_this.food[0][0].y * _this.blocksize) + (_this.blocksize / 2));
 				}
 			}
 
 			if (_this.me.rpm > _this.maxRpm) {
 				_this.maxRpm = _this.me.rpm;
+			}
+
+			if (_this.me.kills > _this.maxKills) {
+				_this.maxKills = _this.me.kills;
 			}
 
 			if (_this.me.rpm === 0) {
